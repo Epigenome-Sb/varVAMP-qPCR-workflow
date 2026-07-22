@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use this workflow, please cite it using the metadata below."
+title: "Generic VarVAMP qPCR Workflow"
+type: software
+authors:
+  - family-names: "Faham"
+    given-names: "Ayman"
+version: 1.0.0
+date-released: 2026-07-22
+license: GPL-3.0-or-later
+repository-code: "https://github.com/Epigenome-Sb/HEV-varVAMP-qPCR-workflow"
+url: "https://github.com/Epigenome-Sb/HEV-varVAMP-qPCR-workflow"
+abstract: >-
+  A reproducible command-line workflow for nucleotide sequence dereplication,
+  multiple sequence alignment, conservation analysis, and qPCR primer/probe
+  design using CD-HIT-EST, MAFFT, and VarVAMP.
+keywords:
+  - qPCR
+  - primer design
+  - probe design
+  - VarVAMP
+  - multiple sequence alignment
+  - conservation analysis
+  - nucleotide sequences

@@ -1,0 +1,20 @@
+name: varvamp-qpcr-workflow
+
+channels:
+  - conda-forge
+  - bioconda
+
+dependencies:
+  - python=3.11
+  - cd-hit=4.8.1
+  - mafft=7.505
+  - biopython
+  - pandas
+  - matplotlib
+  - pillow
+  - pymupdf
+  - jupyterlab
+  - ipykernel
+  - pip
+  - pip:
+      - varvamp==1.3.2
