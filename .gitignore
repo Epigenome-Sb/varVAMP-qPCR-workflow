@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Generated intermediate files
+work/
+*.clstr
+
+# Local FASTA datasets
+data/*.fa
+data/*.fasta
+data/*.fna
+data/*.fas
+
+# Keep documentation files
+!data/README.md
+!data/accession_numbers.tsv
+
+# Temporary files
+*.log
+*.tmp
+
+# Operating systems
+.DS_Store
+Thumbs.db
