@@ -6,10 +6,10 @@ Generic workflow for qPCR primer and probe design from nucleotide sequences.
 
 Steps:
 1. Check the FASTA input file and required software.
-2. Reduce sequence redundancy with CD-HIT-EST.
-3. Perform multiple sequence alignment with MAFFT.
+2. Select and run CD-HIT-EST dereplication parameters.
+3. Select and run a MAFFT alignment strategy.
 4. Analyse alignment conservation.
-5. Design qPCR primers and probes with VarVAMP.
+5. Select VarVAMP qPCR parameters and design primers/probes.
 6. Copy and visualise the main results.
 
 Interactive execution from the repository root:
@@ -116,8 +116,34 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--identity",
         type=float,
-        default=0.95,
-        help="CD-HIT-EST identity threshold (default: 0.95).",
+        default=None,
+        help=(
+            "CD-HIT-EST identity threshold. Required unless "
+            "--skip-cdhit is used; asked interactively when omitted."
+        ),
+    )
+    parser.add_argument(
+        "--skip-cdhit",
+        action="store_true",
+        help="Skip CD-HIT-EST dereplication and align all input sequences.",
+    )
+    parser.add_argument(
+        "--cdhit-mode",
+        choices=("fast", "accurate"),
+        default=None,
+        help=(
+            "CD-HIT-EST clustering mode: fast (-g 0) or accurate (-g 1). "
+            "Asked interactively when omitted."
+        ),
+    )
+    parser.add_argument(
+        "--cdhit-strand",
+        choices=("both", "same"),
+        default=None,
+        help=(
+            "CD-HIT-EST strand comparison: both strands (-r 1) or "
+            "same strand only (-r 0). Asked interactively when omitted."
+        ),
     )
     parser.add_argument(
         "--min-occupancy",
@@ -132,22 +158,53 @@ def parse_arguments() -> argparse.Namespace:
         help="Minimum major-base frequency (default: 0.95).",
     )
     parser.add_argument(
+        "--mafft-strategy",
+        choices=(
+            "auto",
+            "fft-ns-1",
+            "fft-ns-2",
+            "fft-ns-i-2",
+            "fft-ns-i-1000",
+            "nw-ns-2",
+            "nw-ns-i-2",
+            "nw-ns-i-1000",
+            "l-ins-i",
+            "g-ins-i",
+            "e-ins-i",
+            "parttree",
+        ),
+        default=None,
+        help=(
+            "MAFFT de novo alignment strategy. Asked interactively "
+            "when omitted."
+        ),
+    )
+    parser.add_argument(
         "--varvamp-threshold",
         type=float,
-        default=0.95,
-        help="VarVAMP consensus threshold (default: 0.95).",
+        default=None,
+        help=(
+            "VarVAMP consensus threshold (-t). "
+            "Asked interactively when omitted."
+        ),
     )
     parser.add_argument(
         "--primer-ambiguity",
         type=int,
-        default=2,
-        help="Maximum number of ambiguous bases allowed in primers.",
+        default=None,
+        help=(
+            "Maximum ambiguous bases in each primer (-a). "
+            "Asked interactively when omitted."
+        ),
     )
     parser.add_argument(
         "--probe-ambiguity",
         type=int,
-        default=2,
-        help="Maximum number of ambiguous bases allowed in the probe.",
+        default=None,
+        help=(
+            "Maximum ambiguous bases in the probe (-pa). "
+            "Asked interactively when omitted."
+        ),
     )
     parser.add_argument(
         "--threads",
@@ -203,6 +260,337 @@ def ask_for_input_file() -> Path:
         print(
             "File not found. Checked paths: "
             + ", ".join(str(path.resolve()) for path in possible_paths)
+        )
+
+
+
+def ask_required_float(
+    label: str,
+    option_name: str,
+    *,
+    minimum: float,
+    maximum: float,
+) -> float:
+    """Request a required floating-point value without a default."""
+
+    while True:
+        try:
+            raw_value = input(
+                f"{label} ({option_name}) [{minimum}-{maximum}]: "
+            ).strip()
+        except EOFError as error:
+            raise RuntimeError(
+                f"Missing required parameter {option_name}. "
+                "Provide it on the command line."
+            ) from error
+
+        if not raw_value:
+            print("A value is required; pressing Enter alone is not accepted.")
+            continue
+
+        try:
+            value = float(raw_value)
+        except ValueError:
+            print("Please enter a numeric value.")
+            continue
+
+        if not minimum <= value <= maximum:
+            print(
+                f"The value must be between {minimum} and {maximum}."
+            )
+            continue
+
+        return value
+
+
+def ask_required_non_negative_integer(
+    label: str,
+    option_name: str,
+) -> int:
+    """Request a required non-negative integer without a default."""
+
+    while True:
+        try:
+            raw_value = input(
+                f"{label} ({option_name}): "
+            ).strip()
+        except EOFError as error:
+            raise RuntimeError(
+                f"Missing required parameter {option_name}. "
+                "Provide it on the command line."
+            ) from error
+
+        if not raw_value:
+            print("A value is required; pressing Enter alone is not accepted.")
+            continue
+
+        try:
+            value = int(raw_value)
+        except ValueError:
+            print("Please enter an integer such as 0, 1 or 2.")
+            continue
+
+        if value < 0:
+            print("The value cannot be negative.")
+            continue
+
+        return value
+
+
+def ask_required_choice(
+    title: str,
+    choices: list[tuple[str, str]],
+) -> str:
+    """Display a numbered menu and require one explicit selection."""
+
+    print(f"\n{title}")
+    print("=" * len(title))
+
+    for index, (_, description) in enumerate(choices, start=1):
+        print(f"{index}. {description}")
+
+    while True:
+        try:
+            raw_value = input("Select an option by number: ").strip()
+        except EOFError as error:
+            raise RuntimeError(
+                "A required interactive choice is missing. "
+                "Provide the corresponding command-line option."
+            ) from error
+
+        if not raw_value:
+            print("A selection is required.")
+            continue
+
+        try:
+            selected_index = int(raw_value)
+        except ValueError:
+            print("Please enter one of the displayed numbers.")
+            continue
+
+        if 1 <= selected_index <= len(choices):
+            return choices[selected_index - 1][0]
+
+        print("The selected number is outside the available range.")
+
+
+def ask_yes_no(question: str) -> bool:
+    """Ask an explicit yes/no question without a default answer."""
+
+    while True:
+        try:
+            answer = input(f"{question} [y/n]: ").strip().lower()
+        except EOFError as error:
+            raise RuntimeError(
+                "A required yes/no answer is missing."
+            ) from error
+
+        if answer in {"y", "yes"}:
+            return True
+
+        if answer in {"n", "no"}:
+            return False
+
+        print("Please answer y or n.")
+
+
+def cd_hit_word_size(identity: float) -> int:
+    """Select a CD-HIT-EST word size compatible with the identity threshold."""
+
+    if 0.95 <= identity <= 1.0:
+        return 10
+    if 0.90 <= identity < 0.95:
+        return 8
+    if 0.88 <= identity < 0.90:
+        return 7
+    if 0.85 <= identity < 0.88:
+        return 6
+    if 0.80 <= identity < 0.85:
+        return 5
+    if 0.75 <= identity < 0.80:
+        return 4
+
+    raise ValueError(
+        "CD-HIT-EST identity must be between 0.75 and 1.0 "
+        "for the supported word-size mapping."
+    )
+
+
+MAFFT_STRATEGIES: dict[str, dict[str, object]] = {
+    "auto": {
+        "description": (
+            "Auto — MAFFT selects L-INS-i, FFT-NS-i or FFT-NS-2 "
+            "according to dataset size."
+        ),
+        "arguments": ["--auto"],
+    },
+    "fft-ns-1": {
+        "description": (
+            "FFT-NS-1 — very fast progressive alignment; useful for "
+            "very large datasets."
+        ),
+        "arguments": ["--retree", "1", "--maxiterate", "0"],
+    },
+    "fft-ns-2": {
+        "description": (
+            "FFT-NS-2 — fast progressive alignment with two guide-tree "
+            "calculations."
+        ),
+        "arguments": ["--retree", "2", "--maxiterate", "0"],
+    },
+    "fft-ns-i-2": {
+        "description": (
+            "FFT-NS-i (2 cycles) — fast iterative refinement."
+        ),
+        "arguments": ["--retree", "2", "--maxiterate", "2"],
+    },
+    "fft-ns-i-1000": {
+        "description": (
+            "FFT-NS-i (up to 1000 cycles) — more intensive iterative "
+            "refinement."
+        ),
+        "arguments": ["--retree", "2", "--maxiterate", "1000"],
+    },
+    "nw-ns-2": {
+        "description": (
+            "NW-NS-2 — progressive alignment without FFT approximation."
+        ),
+        "arguments": [
+            "--retree", "2", "--maxiterate", "0", "--nofft"
+        ],
+    },
+    "nw-ns-i-2": {
+        "description": (
+            "NW-NS-i (2 cycles) — iterative refinement without FFT."
+        ),
+        "arguments": [
+            "--retree", "2", "--maxiterate", "2", "--nofft"
+        ],
+    },
+    "nw-ns-i-1000": {
+        "description": (
+            "NW-NS-i (up to 1000 cycles) — intensive refinement "
+            "without FFT."
+        ),
+        "arguments": [
+            "--retree", "2", "--maxiterate", "1000", "--nofft"
+        ],
+    },
+    "l-ins-i": {
+        "description": (
+            "L-INS-i — high accuracy for one locally alignable domain "
+            "with flanking regions; usually for fewer than ~200 sequences."
+        ),
+        "arguments": ["--localpair", "--maxiterate", "1000"],
+    },
+    "g-ins-i": {
+        "description": (
+            "G-INS-i — high accuracy for globally alignable sequences "
+            "of similar length; usually for fewer than ~200 sequences."
+        ),
+        "arguments": ["--globalpair", "--maxiterate", "1000"],
+    },
+    "e-ins-i": {
+        "description": (
+            "E-INS-i — high accuracy when conserved motifs are separated "
+            "by large unalignable regions; usually for fewer than ~200 sequences."
+        ),
+        "arguments": [
+            "--ep", "0", "--genafpair", "--maxiterate", "1000"
+        ],
+    },
+    "parttree": {
+        "description": (
+            "NW-NS-PartTree-1 — designed for extremely large datasets, "
+            "approximately 10,000-50,000 sequences."
+        ),
+        "arguments": [
+            "--retree", "1", "--maxiterate", "0",
+            "--nofft", "--parttree"
+        ],
+    },
+}
+
+
+def choose_mafft_strategy() -> str:
+    """Require an explicit MAFFT strategy selection."""
+
+    choices = [
+        (key, value["description"])
+        for key, value in MAFFT_STRATEGIES.items()
+    ]
+    return ask_required_choice(
+        "MAFFT alignment strategy checkpoint",
+        choices,
+    )
+
+
+def warn_about_mafft_strategy(
+    strategy: str,
+    sequence_count: int,
+) -> None:
+    """Warn when a strategy is outside its usual dataset-size range."""
+
+    if strategy in {"l-ins-i", "g-ins-i", "e-ins-i"}:
+        if sequence_count > 200:
+            print(
+                f"\nWarning: {strategy} is usually recommended for fewer "
+                f"than about 200 sequences, but {sequence_count} sequences "
+                "will be aligned."
+            )
+            if not ask_yes_no("Continue with this MAFFT strategy?"):
+                raise RuntimeError(
+                    "MAFFT strategy rejected by the user."
+                )
+
+    if strategy == "parttree" and sequence_count < 10000:
+        print(
+            f"\nWarning: PartTree is intended for very large datasets, "
+            f"whereas this dataset contains {sequence_count} sequences."
+        )
+        if not ask_yes_no("Continue with PartTree?"):
+            raise RuntimeError(
+                "MAFFT PartTree strategy rejected by the user."
+            )
+
+
+def print_parameter_summary(
+    *,
+    skip_cdhit: bool,
+    identity: float | None,
+    cdhit_mode: str | None,
+    cdhit_strand: str | None,
+    mafft_strategy: str,
+    varvamp_threshold: float | None,
+    primer_ambiguity: int | None,
+    probe_ambiguity: int | None,
+    skip_varvamp: bool,
+) -> None:
+    """Print and explicitly confirm all selected scientific parameters."""
+
+    print("\nScientific parameter summary")
+    print("=" * 28)
+
+    if skip_cdhit:
+        print("CD-HIT-EST: skipped")
+    else:
+        print(f"CD-HIT-EST identity (-c): {identity}")
+        print(f"CD-HIT-EST mode: {cdhit_mode}")
+        print(f"CD-HIT-EST strand comparison: {cdhit_strand}")
+        print(f"CD-HIT-EST word size (-n): {cd_hit_word_size(identity)}")
+
+    print(f"MAFFT strategy: {mafft_strategy}")
+
+    if skip_varvamp:
+        print("VarVAMP: skipped")
+    else:
+        print(f"VarVAMP consensus threshold (-t): {varvamp_threshold}")
+        print(f"Primer ambiguity (-a): {primer_ambiguity}")
+        print(f"Probe ambiguity (-pa): {probe_ambiguity}")
+
+    if not ask_yes_no("Run the workflow with these parameters?"):
+        raise RuntimeError(
+            "Workflow cancelled because the parameters were not confirmed."
         )
 
 
@@ -734,15 +1122,10 @@ def main() -> int:
     args = parse_arguments()
 
     try:
-        validate_fraction(args.identity, "--identity")
         validate_fraction(args.min_occupancy, "--min-occupancy")
         validate_fraction(
             args.min_major_frequency,
             "--min-major-frequency",
-        )
-        validate_fraction(
-            args.varvamp_threshold,
-            "--varvamp-threshold",
         )
 
         if args.input is None:
@@ -778,7 +1161,156 @@ def main() -> int:
         print(f"Working directory: {workdir}")
         print(f"Results directory: {results_dir}")
 
-        required_tools = ["cd-hit-est", "mafft"]
+        interactive_session = sys.stdin.isatty()
+
+        skip_cdhit = args.skip_cdhit
+        if interactive_session and not args.skip_cdhit:
+            skip_cdhit = not ask_yes_no(
+                "Run CD-HIT-EST sequence dereplication?"
+            )
+
+        identity = args.identity
+        cdhit_mode = args.cdhit_mode
+        cdhit_strand = args.cdhit_strand
+
+        if not skip_cdhit:
+            if identity is None:
+                if not interactive_session:
+                    raise RuntimeError(
+                        "--identity is required in a non-interactive session."
+                    )
+                identity = ask_required_float(
+                    "CD-HIT-EST identity threshold",
+                    "-c",
+                    minimum=0.75,
+                    maximum=1.0,
+                )
+
+            if not 0.75 <= identity <= 1.0:
+                raise ValueError(
+                    "--identity must be between 0.75 and 1.0."
+                )
+
+            if cdhit_mode is None:
+                if not interactive_session:
+                    raise RuntimeError(
+                        "--cdhit-mode is required in a non-interactive session."
+                    )
+                cdhit_mode = ask_required_choice(
+                    "CD-HIT-EST clustering mode checkpoint",
+                    [
+                        (
+                            "fast",
+                            "Fast mode (-g 0): assign a sequence to the "
+                            "first cluster meeting the threshold.",
+                        ),
+                        (
+                            "accurate",
+                            "Accurate mode (-g 1): compare against all "
+                            "representatives and select the most similar cluster.",
+                        ),
+                    ],
+                )
+
+            if cdhit_strand is None:
+                if not interactive_session:
+                    raise RuntimeError(
+                        "--cdhit-strand is required in a non-interactive session."
+                    )
+                cdhit_strand = ask_required_choice(
+                    "CD-HIT-EST strand checkpoint",
+                    [
+                        (
+                            "both",
+                            "Compare both +/+ and +/- orientations (-r 1).",
+                        ),
+                        (
+                            "same",
+                            "Compare only the same orientation, +/+ (-r 0).",
+                        ),
+                    ],
+                )
+
+        mafft_strategy = args.mafft_strategy
+        if mafft_strategy is None:
+            if not interactive_session:
+                raise RuntimeError(
+                    "--mafft-strategy is required in a non-interactive session."
+                )
+            mafft_strategy = choose_mafft_strategy()
+
+        varvamp_threshold = args.varvamp_threshold
+        primer_ambiguity = args.primer_ambiguity
+        probe_ambiguity = args.probe_ambiguity
+
+        if not args.skip_varvamp:
+            if varvamp_threshold is None:
+                if not interactive_session:
+                    raise RuntimeError(
+                        "--varvamp-threshold is required in a "
+                        "non-interactive session."
+                    )
+                varvamp_threshold = ask_required_float(
+                    "VarVAMP consensus threshold",
+                    "-t",
+                    minimum=0.01,
+                    maximum=1.0,
+                )
+
+            if primer_ambiguity is None:
+                if not interactive_session:
+                    raise RuntimeError(
+                        "--primer-ambiguity is required in a "
+                        "non-interactive session."
+                    )
+                primer_ambiguity = ask_required_non_negative_integer(
+                    "Maximum ambiguous bases in each primer",
+                    "-a",
+                )
+
+            if probe_ambiguity is None:
+                if not interactive_session:
+                    raise RuntimeError(
+                        "--probe-ambiguity is required in a "
+                        "non-interactive session."
+                    )
+                probe_ambiguity = ask_required_non_negative_integer(
+                    "Maximum ambiguous bases in the probe",
+                    "-pa",
+                )
+
+            validate_fraction(
+                varvamp_threshold,
+                "--varvamp-threshold",
+            )
+
+            if primer_ambiguity < 0:
+                raise ValueError(
+                    "--primer-ambiguity cannot be negative."
+                )
+
+            if probe_ambiguity < 0:
+                raise ValueError(
+                    "--probe-ambiguity cannot be negative."
+                )
+
+        if interactive_session:
+            print_parameter_summary(
+                skip_cdhit=skip_cdhit,
+                identity=identity,
+                cdhit_mode=cdhit_mode,
+                cdhit_strand=cdhit_strand,
+                mafft_strategy=mafft_strategy,
+                varvamp_threshold=varvamp_threshold,
+                primer_ambiguity=primer_ambiguity,
+                probe_ambiguity=probe_ambiguity,
+                skip_varvamp=args.skip_varvamp,
+            )
+
+        required_tools = ["mafft"]
+
+        if not skip_cdhit:
+            required_tools.append("cd-hit-est")
 
         if not args.skip_varvamp:
             required_tools.append("varvamp")
@@ -792,38 +1324,75 @@ def main() -> int:
         alignment_file = workdir / f"{project_name}_alignment.fasta"
         varvamp_dir = workdir / f"{project_name}_qpcr"
 
-        print("\n1. Sequence dereplication with CD-HIT-EST")
-        run_command(
-            [
-                "cd-hit-est",
-                "-i",
-                str(input_file),
-                "-o",
-                str(non_redundant_file),
-                "-c",
-                str(args.identity),
-                "-d",
-                "0",
-            ]
-        )
-
         initial_count = count_fasta_sequences(input_file)
-        non_redundant_count = count_fasta_sequences(non_redundant_file)
-        reduction = (
-            100 * (initial_count - non_redundant_count) / initial_count
-            if initial_count > 0
-            else 0.0
-        )
 
-        print(f"Initial sequences: {initial_count}")
-        print(f"Non-redundant sequences: {non_redundant_count}")
-        print(f"Reduction: {reduction:.2f} %")
+        if skip_cdhit:
+            print("\n1. CD-HIT-EST dereplication skipped")
+            shutil.copy2(input_file, non_redundant_file)
+            non_redundant_count = initial_count
+            print(f"Sequences retained for MAFFT: {non_redundant_count}")
+        else:
+            print("\n1. Sequence dereplication with CD-HIT-EST")
+
+            word_size = cd_hit_word_size(identity)
+            cdhit_g = "1" if cdhit_mode == "accurate" else "0"
+            cdhit_r = "1" if cdhit_strand == "both" else "0"
+
+            run_command(
+                [
+                    "cd-hit-est",
+                    "-i",
+                    str(input_file),
+                    "-o",
+                    str(non_redundant_file),
+                    "-c",
+                    str(identity),
+                    "-n",
+                    str(word_size),
+                    "-g",
+                    cdhit_g,
+                    "-r",
+                    cdhit_r,
+                    "-T",
+                    str(args.threads),
+                    "-d",
+                    "0",
+                ]
+            )
+
+            non_redundant_count = count_fasta_sequences(
+                non_redundant_file
+            )
+            reduction = (
+                100
+                * (initial_count - non_redundant_count)
+                / initial_count
+                if initial_count > 0
+                else 0.0
+            )
+
+            print(f"Initial sequences: {initial_count}")
+            print(f"Non-redundant sequences: {non_redundant_count}")
+            print(f"Reduction: {reduction:.2f} %")
+            print(f"Automatically selected CD-HIT word size: {word_size}")
+
+        if interactive_session:
+            warn_about_mafft_strategy(
+                mafft_strategy,
+                non_redundant_count,
+            )
 
         print("\n2. Multiple sequence alignment with MAFFT")
+        mafft_arguments = list(
+            MAFFT_STRATEGIES[mafft_strategy]["arguments"]
+        )
+
         run_command(
             [
                 "mafft",
-                "--auto",
+                *mafft_arguments,
+                "--thread",
+                str(args.threads),
                 str(non_redundant_file),
             ],
             stdout_file=alignment_file,
@@ -855,11 +1424,11 @@ def main() -> int:
                     "varvamp",
                     "qpcr",
                     "-t",
-                    str(args.varvamp_threshold),
+                    str(varvamp_threshold),
                     "-a",
-                    str(args.primer_ambiguity),
+                    str(primer_ambiguity),
                     "-pa",
-                    str(args.probe_ambiguity),
+                    str(probe_ambiguity),
                     "-th",
                     str(args.threads),
                     str(alignment_file),
