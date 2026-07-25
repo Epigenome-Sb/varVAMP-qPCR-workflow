@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Copyright (C) 2026 Ayman Faham
+# Copyright (C) 2026 Aymane Faham
 """
 Generic workflow for qPCR primer and probe design from nucleotide sequences.
 
