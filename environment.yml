@@ -13,8 +13,6 @@ dependencies:
   - matplotlib
   - pillow
   - pymupdf
-  - jupyterlab
-  - ipykernel
   - pip
   - pip:
       - varvamp==1.3.2
